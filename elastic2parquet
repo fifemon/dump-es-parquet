@@ -1,0 +1,132 @@
+#!/usr/bin/env python
+"""
+Write parquet files from elasticsearch indices, using polars.
+"""
+
+from argparse import ArgumentParser
+import logging
+import requests
+import traceback
+import re
+import json
+from datetime import datetime
+
+from opensearchpy import OpenSearch, RequestsHttpConnection
+import polars as pl
+
+# https://www.elastic.co/guide/en/elasticsearch/reference/6.8/mapping-types.html
+# https://docs.pola.rs/py-polars/html/reference/datatypes.html
+es2pl_type = {
+    'integer': pl.Int32,
+    'long': pl.Int64,
+    'string': pl.String,
+    'keyword': pl.String,
+    'boolean': pl.Boolean,
+    'date': pl.Datetime,
+}
+
+logger = logging.getLogger(__name__)
+
+class Processor(object):
+    def __init__(self, es, index, filename, size=500, timeout=60):
+        self.es = es
+        self.index = index
+        self.filename = filename
+        self.size = size
+        self.timeout = timeout
+
+        self.es_client = OpenSearch(self.es, timeout=timeout, 
+                                        connection_class = RequestsHttpConnection)
+
+    def process(self):
+        for idx in self.get_indices(self.index):
+            try:
+                logger.log(99,'Processing index %s'%idx)
+                self.process_index(idx)
+            except:
+                logger.error('Exception while processing index %s'%idx)
+                traceback.print_exc()
+                continue
+
+    def map_properties(self, m):
+        """Map elasticsearch types to polars types"""
+        r={}
+        for field,typ in m['properties'].items():
+            if 'properties' in typ:
+                r[field] = pl.Struct(self.map_properties(typ))
+            else:
+                r[field] = es2pl_type.get(typ['type'],None)
+        return r
+    
+    def map_source(self, schema, src):
+        """Map elasticsearch source doc to native types"""
+        dest = {}
+        for k, v in src.items():
+            if schema[k] == pl.Datetime:
+                dest[k] = datetime.fromisoformat(v)
+            else:
+                dest[k] = v
+        return dest
+
+    def index_schema(self,index):
+        mapping = self.es_client.indices.get_mapping(index=index)
+        for idx,dts in mapping.items():
+            for dt,m in dts['mappings'].items():
+                return self.map_properties(m)
+
+    def process_index(self,index):
+        schema = self.index_schema(index)
+        print(schema)
+        s = self.es_client.search(index=index,
+                                    scroll="5m",
+                                    size=self.size)
+        all_hits = s['hits']['total']
+        if all_hits == 0:
+            logger.error('No records found')
+            return
+        #print(s['hits']['hits'][0])
+        logger.log(99,'Processing %d records'%all_hits)
+        df = pl.DataFrame([self.map_source(schema, d['_source']) for d in s['hits']['hits']], schema=schema, orient='rows')
+        sent_hits = len(s['hits']['hits'])
+        logger.info('read %d/%d records'%(sent_hits,all_hits))
+        #print(df)
+        #return
+        while True:
+            s = self.es_client.scroll(scroll_id=s['_scroll_id'],scroll="5m")
+            if len(s['hits']['hits']) == 0:
+                break
+            df2 = pl.DataFrame([self.map_source(schema, d['_source']) for d in s['hits']['hits']], schema=schema, orient='rows')
+            df = df.vstack(df2)
+            sent_hits += len(s['hits']['hits'])
+            logger.info('read %d/%d records'%(sent_hits,all_hits))
+        df.write_parquet(self.filename)
+        logger.log(99,'Processing complete %d/%d records'%(sent_hits,all_hits))
+
+    def get_indices(self, index_pattern):
+        idxs = self.es_client.indices.get_settings(index=index_pattern)
+        return idxs.keys()
+
+
+if __name__=="__main__":
+    parser = ArgumentParser(description='Reindex documents')
+    parser.add_argument('index',help='source index pattern')
+    parser.add_argument('--es',help='source cluster address',default="http://localhost:9200")
+    parser.add_argument('--filename',help='parquet file name',default="elastic.parquet")
+    parser.add_argument('--size',help='Record batch size (default 500)',default=500,type=int)
+    parser.add_argument('--timeout',help='Elasticsearch read timeout in seconds (default 60)',default=60,type=int)
+    parser.add_argument('--debug',help='Enable debug logging',action='store_true')
+    parser.add_argument('--quiet',help='Disable most logging (ignored if --debug specified)',action='store_true')
+
+    args = parser.parse_args()
+
+    logfmt = "%(asctime)s [%(levelname)s %(name)s] %(message)s"
+    if args.debug:
+        logging.basicConfig(level=logging.DEBUG, format=logfmt)
+    elif args.quiet:
+        logging.basicConfig(level=logging.ERROR, format=logfmt)
+    else:
+        logging.basicConfig(level=logging.INFO, format=logfmt)
+    logging.addLevelName(99,'UBER')
+
+    processor = Processor(args.es, args.index, args.filename, args.size, args.timeout)
+    processor.process()
