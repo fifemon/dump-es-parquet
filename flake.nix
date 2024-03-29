@@ -14,7 +14,7 @@
       devShells = forEachSupportedSystem ({ pkgs }: {
         default = pkgs.mkShell {
           packages = with pkgs; [ python311 virtualenv duckdb ] ++
-            (with pkgs.python311Packages; [ pip polars opensearch-py requests ]);
+            (with pkgs.python311Packages; [ pip polars opensearch-py requests requests.optional-dependencies.socks]);
             #(with pkgs.python311Packages; [ pip polars elasticsearch elastic-transport requests ]);
         };
       });

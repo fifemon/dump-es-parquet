@@ -9,6 +9,7 @@ opensearch-py==2.4.2
 platformdirs==4.2.0
 polars==0.20.15
 pycparser==2.21
+PySocks==1.7.1
 python-dateutil==2.9.0.post0
 requests==2.31.0
 six==1.16.0

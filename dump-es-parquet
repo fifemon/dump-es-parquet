@@ -28,11 +28,12 @@ es2pl_type = {
 logger = logging.getLogger(__name__)
 
 class Processor(object):
-    def __init__(self, es, index, size=500, timeout=60):
+    def __init__(self, es, index, size=500, timeout=60, flatten=False):
         self.es = es
         self.index = index
         self.size = size
         self.timeout = timeout
+        self.flatten = flatten
 
         self.es_client = OpenSearch(self.es, timeout=timeout, 
                                         connection_class = RequestsHttpConnection)
@@ -47,35 +48,44 @@ class Processor(object):
                 traceback.print_exc()
                 continue
 
-    def map_properties(self, m):
+    def map_properties(self, m, prefix=''):
         """Map elasticsearch types to polars types"""
         r={}
         for field,typ in m['properties'].items():
             if 'properties' in typ:
-                r[field] = pl.Struct(self.map_properties(typ))
+                if self.flatten:
+                    r.update(self.map_properties(typ,prefix=field+'_'))
+                else:
+                    r[prefix+field] = pl.Struct(self.map_properties(typ))
             else:
-                r[field] = es2pl_type.get(typ['type'],None)
+                r[prefix+field] = es2pl_type.get(typ['type'],None)
         return r
     
-    def map_source(self, schema, src):
+    def map_source(self, schema, src, prefix=''):
         """Map elasticsearch source doc to native types"""
         dest = {}
         for k, v in src.items():
-            if schema[k] == pl.Datetime:
-                dest[k] = datetime.fromisoformat(v)
+            pk = prefix+k
+            if type(v) is dict:
+                dest.update(self.map_source(schema, v, prefix=k+'_'))
+            elif pk not in schema:
+                logger.warning(f'field {pk} not in schema; dropping')
+            elif schema[pk] == pl.Datetime:
+                dest[pk] = datetime.fromisoformat(v)
             else:
-                dest[k] = v
+                dest[pk] = v
         return dest
 
     def index_schema(self,index):
         mapping = self.es_client.indices.get_mapping(index=index)
+        logger.debug(mapping)
         for idx,dts in mapping.items():
             for dt,m in dts['mappings'].items():
                 return self.map_properties(m)
 
     def process_index(self,index):
         schema = self.index_schema(index)
-        print(schema)
+        logger.debug(schema)
         s = self.es_client.search(index=index,
                                     scroll="5m",
                                     size=self.size)
@@ -98,8 +108,9 @@ class Processor(object):
             df = df.vstack(df2)
             sent_hits += len(s['hits']['hits'])
             logger.info('read %d/%d records'%(sent_hits,all_hits))
-        df.write_parquet(index+'.parquet')
-        logger.log(99,'Processing complete %d/%d records'%(sent_hits,all_hits))
+        fname = index+'.parquet'
+        df.write_parquet(fname)
+        logger.log(99,f'Processing complete. {sent_hits}/{all_hits} records written to {fname}')
 
     def get_indices(self, index_pattern):
         idxs = self.es_client.indices.get_settings(index=index_pattern)
@@ -107,7 +118,7 @@ class Processor(object):
 
 
 if __name__=="__main__":
-    parser = ArgumentParser(description='Reindex documents')
+    parser = ArgumentParser(description='Dump documents to parquet files')
     parser.add_argument('index',help='source index pattern')
     parser.add_argument('--es',help='source cluster address',default="http://localhost:9200")
     # we can just use the index name for each file
@@ -115,6 +126,7 @@ if __name__=="__main__":
     #parser.add_argument('--filename',help='parquet file name',default="elastic.parquet")
     parser.add_argument('--size',help='Record batch size (default 500)',default=500,type=int)
     parser.add_argument('--timeout',help='Elasticsearch read timeout in seconds (default 60)',default=60,type=int)
+    parser.add_argument('--flatten',help='Flatten nested data into top level, otherwise use structs',action='store_true')
     parser.add_argument('--debug',help='Enable debug logging',action='store_true')
     parser.add_argument('--quiet',help='Disable most logging (ignored if --debug specified)',action='store_true')
 
@@ -129,5 +141,5 @@ if __name__=="__main__":
         logging.basicConfig(level=logging.INFO, format=logfmt)
     logging.addLevelName(99,'UBER')
 
-    processor = Processor(args.es, args.index, args.size, args.timeout)
+    processor = Processor(args.es, args.index, args.size, args.timeout, args.flatten)
     processor.process()
