@@ -28,10 +28,9 @@ es2pl_type = {
 logger = logging.getLogger(__name__)
 
 class Processor(object):
-    def __init__(self, es, index, filename, size=500, timeout=60):
+    def __init__(self, es, index, size=500, timeout=60):
         self.es = es
         self.index = index
-        self.filename = filename
         self.size = size
         self.timeout = timeout
 
@@ -99,7 +98,7 @@ class Processor(object):
             df = df.vstack(df2)
             sent_hits += len(s['hits']['hits'])
             logger.info('read %d/%d records'%(sent_hits,all_hits))
-        df.write_parquet(self.filename)
+        df.write_parquet(index+'.parquet')
         logger.log(99,'Processing complete %d/%d records'%(sent_hits,all_hits))
 
     def get_indices(self, index_pattern):
@@ -111,7 +110,9 @@ if __name__=="__main__":
     parser = ArgumentParser(description='Reindex documents')
     parser.add_argument('index',help='source index pattern')
     parser.add_argument('--es',help='source cluster address',default="http://localhost:9200")
-    parser.add_argument('--filename',help='parquet file name',default="elastic.parquet")
+    # we can just use the index name for each file
+    #TODO: hive partitioning? https://duckdb.org/docs/data/partitioning/hive_partitioning
+    #parser.add_argument('--filename',help='parquet file name',default="elastic.parquet")
     parser.add_argument('--size',help='Record batch size (default 500)',default=500,type=int)
     parser.add_argument('--timeout',help='Elasticsearch read timeout in seconds (default 60)',default=60,type=int)
     parser.add_argument('--debug',help='Enable debug logging',action='store_true')
@@ -128,5 +129,5 @@ if __name__=="__main__":
         logging.basicConfig(level=logging.INFO, format=logfmt)
     logging.addLevelName(99,'UBER')
 
-    processor = Processor(args.es, args.index, args.filename, args.size, args.timeout)
+    processor = Processor(args.es, args.index, args.size, args.timeout)
     processor.process()
