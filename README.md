@@ -1,4 +1,8 @@
-Tools for working with Landscape data offline.
+Dump data from Elasticsearch or Opensearch to parquet files, one file per index. 
+
+A columnar dataframe is built in memory using [Polars](https://docs.pola.rs/), then written out to parquet with zstd compression.
+
+Nested fields are represented as Structs, unles `--flatten` is provided, in which case fields are flattened into the top-level by combining field names with underscores. Flattening is recommended when working with multiple indices that have dynamic mapping, as columns can then be merged across files - different structs cannot easily be merged.
 
 # Requirements
 
@@ -17,15 +21,7 @@ With `direnv` installed run `direnv allow` to have it load the environment for y
 
     pip install -r requirements.txt
 
-# dump-es-parquet
-
-Dump data from Elasticsearch or Opensearch to parquet files, one file per index. 
-
-A columnar dataframe is built in memory using [Polars](https://docs.pola.rs/), then written out to parquet with zstd compression.
-
-Nested fields are represented as Structs, unles `--flatten` is provided, in which case fields are flattened into the top-level by combining field names with underscores. Flattening is recommended when working with multiple indices that have dynamic mapping, as columns can then be merged across files - different structs cannot easily be merged.
-
-## Usage
+# Usage
 
 This will read all records from the `my-data` index, in batches of 500, and write them to a parquet file named `my-data.parquet`:
 
