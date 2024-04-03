@@ -77,13 +77,9 @@ class Processor(object):
         dest = {}
         for k, v in src.items():
             pk = prefix+k
-            if type(v) is dict:
-                dest.update(self.map_source(schema, v, prefix=k+'_'))
-            elif type(v) is list:
-                self.log_warning(f'field {pk} is list - keeping first value')
-                v = v[0]
-            elif pk not in schema:
+            if pk not in schema:
                 self.log_warning(f'field {pk} not in schema; dropping')
+                continue
                 # we really shouldn't be modifying the schema here. Also, we can't stack
                 # data frames of different widths, so after the first batch the schema is effectively fixed.
                 #try:
@@ -92,6 +88,20 @@ class Processor(object):
                 #    self.log_warning(f'field {pk} not in schema, setting to string')
                 #except ValueError:
                 #    self.log_warning(f'field {pk} not in schema, and can\'t convert to string; dropping')
+
+            # elasticsearch can handle multiple values for a field, without changing the index mapping
+            # (it's just the scalar type), while we'd have set the dataframe schema to a list in advance.
+            # Taking the first value is an imperfect compromise.
+            if type(v) is list:
+                self.log_warning(f'field {pk} is list - keeping first value')
+                v = v[0]
+
+            if schema[pk] == pl.Struct:
+                if self.flatten:
+                    dest.update(self.map_source(schema, v, prefix=k+'_'))
+                else:
+                    dest[pk] = self.map_source(schema[pk].to_schema(), v)
+                continue
             elif schema[pk] == pl.Datetime:
                 try:
                     dest[pk] = datetime.fromisoformat(v)
