@@ -29,12 +29,13 @@ es2pl_type = {
 logger = logging.getLogger(__name__)
 
 class Processor(object):
-    def __init__(self, es, index, size=500, timeout=60, flatten=False):
+    def __init__(self, es, index, size=500, timeout=60, flatten=False, query=None):
         self.es = es
         self.index = index
         self.size = size
         self.timeout = timeout
         self.flatten = flatten
+        self.query = query
 
         self.es_client = OpenSearch(self.es, timeout=timeout, 
                                         connection_class = RequestsHttpConnection)
@@ -111,8 +112,9 @@ class Processor(object):
         schema = self.index_schema(index)
         logger.debug(schema)
         s = self.es_client.search(index=index,
-                                    scroll="5m",
-                                    size=self.size)
+                                  q=self.query,
+                                  scroll="5m",
+                                  size=self.size)
         all_hits = s['hits']['total']
         if all_hits == 0:
             logger.error('No records found')
@@ -158,6 +160,7 @@ if __name__=="__main__":
     parser.add_argument('--size',help='Record batch size (default 500)',default=500,type=int)
     parser.add_argument('--timeout',help='Elasticsearch read timeout in seconds (default 60)',default=60,type=int)
     parser.add_argument('--flatten',help='Flatten nested data into top level, otherwise use structs',action='store_true')
+    parser.add_argument('--query',help='Query string to filter results',default=None,type=str)
     parser.add_argument('--debug',help='Enable debug logging',action='store_true')
     parser.add_argument('--quiet',help='Disable most logging (ignored if --debug specified)',action='store_true')
 
@@ -172,5 +175,5 @@ if __name__=="__main__":
         logging.basicConfig(level=logging.INFO, format=logfmt)
     logging.addLevelName(99,'UBER')
 
-    processor = Processor(args.es, args.index, args.size, args.timeout, args.flatten)
+    processor = Processor(args.es, args.index, args.size, args.timeout, args.flatten, args.query)
     processor.process()
