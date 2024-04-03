@@ -10,6 +10,7 @@ import traceback
 import re
 import json
 from datetime import datetime
+from collections import defaultdict
 
 from opensearchpy import OpenSearch, RequestsHttpConnection
 import polars as pl
@@ -37,6 +38,8 @@ class Processor(object):
 
         self.es_client = OpenSearch(self.es, timeout=timeout, 
                                         connection_class = RequestsHttpConnection)
+
+        self.doc_warnings = defaultdict(lambda: 0)
 
     def process(self):
         for idx in self.get_indices(self.index):
@@ -68,8 +71,13 @@ class Processor(object):
             pk = prefix+k
             if type(v) is dict:
                 dest.update(self.map_source(schema, v, prefix=k+'_'))
+            elif type(v) is list:
+                self.log_warning(f'field {pk} is list - keeping first value')
+                v = v[0]
             elif pk not in schema:
-                logger.warning(f'field {pk} not in schema; dropping')
+                dest[pk] = v
+                schema[pk] = None
+                self.log_warning(f'field {pk} not in schema, will attempt to guess type')
             elif schema[pk] == pl.Datetime:
                 try:
                     dest[pk] = datetime.fromisoformat(v)
@@ -87,7 +95,7 @@ class Processor(object):
                         else:
                             dest[pk] = datetime.fromtimestamp(i/1000)
                     except ValueError:
-                        logger.warning(f'unable to convert field {pk} with value {v} to datetime')
+                        self.log_warning(f'unable to convert field {pk} to datetime')
             else:
                 dest[pk] = v
         return dest
@@ -124,6 +132,10 @@ class Processor(object):
             df = df.vstack(df2)
             sent_hits += len(s['hits']['hits'])
             logger.info('read %d/%d records'%(sent_hits,all_hits))
+
+        for msg,cnt in self.doc_warnings.items():
+            logger.warning(f'{msg} [{cnt} documents]')
+
         fname = index+'.parquet'
         df.write_parquet(fname)
         logger.log(99,f'Processing complete. {sent_hits}/{all_hits} records written to {fname}')
@@ -131,6 +143,9 @@ class Processor(object):
     def get_indices(self, index_pattern):
         idxs = self.es_client.indices.get_settings(index=index_pattern)
         return idxs.keys()
+
+    def log_warning(self, msg):
+        self.doc_warnings[msg] += 1
 
 
 if __name__=="__main__":
