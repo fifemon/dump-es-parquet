@@ -71,7 +71,23 @@ class Processor(object):
             elif pk not in schema:
                 logger.warning(f'field {pk} not in schema; dropping')
             elif schema[pk] == pl.Datetime:
-                dest[pk] = datetime.fromisoformat(v)
+                try:
+                    dest[pk] = datetime.fromisoformat(v)
+                except ValueError:
+                    try:
+                        i = int(v)
+                        if i < 20000000000:
+                            # guess if the epoch number is seconds or milliseconds
+                            # if seconds this is Tue Oct 11 07:33:20 EDT 2603
+                            # if it's actually millis: Thu Aug 20 07:33:20 EDT 1970
+                            # so as long as we don't need to deal with any dates in 1970 
+                            # or after the singularity this is fine... even then,
+                            # if the date actually is in 1970, the year will at least be correct!
+                            dest[pk] = datetime.fromtimestamp(i)
+                        else:
+                            dest[pk] = datetime.fromtimestamp(i/1000)
+                    except ValueError:
+                        logger.warning(f'unable to convert field {pk} with value {v} to datetime')
             else:
                 dest[pk] = v
         return dest
