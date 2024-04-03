@@ -76,9 +76,15 @@ class Processor(object):
                 self.log_warning(f'field {pk} is list - keeping first value')
                 v = v[0]
             elif pk not in schema:
-                dest[pk] = v
-                schema[pk] = None
-                self.log_warning(f'field {pk} not in schema, will attempt to guess type')
+                self.log_warning(f'field {pk} not in schema; dropping')
+                # we really shouldn't be modifying the schema here. Also, we can't stack
+                # data frames of different widths, so after the first batch the schema is effectively fixed.
+                #try:
+                #    dest[pk] = str(v)
+                #    schema[pk] = pl.String
+                #    self.log_warning(f'field {pk} not in schema, setting to string')
+                #except ValueError:
+                #    self.log_warning(f'field {pk} not in schema, and can\'t convert to string; dropping')
             elif schema[pk] == pl.Datetime:
                 try:
                     dest[pk] = datetime.fromisoformat(v)
