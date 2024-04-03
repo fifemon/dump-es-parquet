@@ -18,9 +18,15 @@ import polars as pl
 # https://www.elastic.co/guide/en/elasticsearch/reference/6.8/mapping-types.html
 # https://docs.pola.rs/py-polars/html/reference/datatypes.html
 es2pl_type = {
+    'byte': pl.Int8,
+    'short': pl.Int16,
     'integer': pl.Int32,
     'long': pl.Int64,
+    'half_float': pl.Float32,
+    'float': pl.Float32,
+    'double': pl.Float64,
     'string': pl.String,
+    'text': pl.String,
     'keyword': pl.String,
     'boolean': pl.Boolean,
     'date': pl.Datetime,
@@ -103,6 +109,24 @@ class Processor(object):
                             dest[pk] = datetime.fromtimestamp(i/1000)
                     except ValueError:
                         self.log_warning(f'unable to convert field {pk} to datetime')
+            elif schema[pk] in (pl.Int8, pl.Int16, pl.Int32, pl.Int64):
+                try:
+                    dest[pk] = int(v)
+                except ValueError:
+                    try:
+                        dest[pk] = int(float(v))
+                    except ValueError:
+                        self.log_warning(f'unable to convert field {pk} to int')
+            elif schema[pk] in (pl.Float32, pl.Float64):
+                try:
+                    dest[pk] = float(v)
+                except ValueError:
+                    self.log_warning(f'unable to convert field {pk} to float')
+            elif schema[pk] == pl.String:
+                try:
+                    dest[pk] = str(v)
+                except ValueError:
+                    self.log_warning(f'unable to convert field {pk} to string')
             else:
                 dest[pk] = v
         return dest
