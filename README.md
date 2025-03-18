@@ -6,11 +6,11 @@ Nested fields are represented as Structs, unles `--flatten` is provided, in whic
 
 # Requirements
 
-Developed with Python 3.11 with:
+Developed with Python 3.12 with:
 
-- opensearch-py==2.4.2
-- polars==0.20.15
-- requests==2.31.0
+- opensearch-py==2.8.0
+- polars==1.21.0
+- requests==2.32.3
 
 ## Nix (recommended)
 

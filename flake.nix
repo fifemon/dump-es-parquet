@@ -1,7 +1,7 @@
 {
   description = "A Nix-flake-based Python development environment";
 
-  inputs.nixpkgs.url = "https://flakehub.com/f/NixOS/nixpkgs/0.1.*.tar.gz";
+  inputs.nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
 
   outputs = { self, nixpkgs }:
     let
@@ -13,9 +13,8 @@
     {
       devShells = forEachSupportedSystem ({ pkgs }: {
         default = pkgs.mkShell {
-          packages = with pkgs; [ python311 virtualenv duckdb ] ++
-            (with pkgs.python311Packages; [ pip polars opensearch-py requests requests.optional-dependencies.socks]);
-            #(with pkgs.python311Packages; [ pip polars elasticsearch elastic-transport requests ]);
+          packages = with pkgs; [ python312 virtualenv duckdb ] ++
+            (with pkgs.python312Packages; [ pip polars opensearch-py requests requests.optional-dependencies.socks]);
         };
       });
     };
