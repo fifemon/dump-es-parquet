@@ -23,6 +23,29 @@ With `direnv` installed run `direnv allow` to have it load the environment for y
 
 # Usage
 
+```
+usage: dump-es-parquet [-h] [--es ES] [--size SIZE] [--timeout TIMEOUT] [--flatten] [--query QUERY] [--max-partition-size-mb MAX_PARTITION_SIZE_MB] [--debug] [--quiet] index
+
+Dump documents to parquet files
+
+positional arguments:
+  index                 source index pattern
+
+options:
+  -h, --help            show this help message and exit
+  --es ES               source cluster address
+  --size SIZE           Record batch size (default 500)
+  --timeout TIMEOUT     Elasticsearch read timeout in seconds (default 60)
+  --flatten             Flatten nested data into top level, otherwise use structs
+  --query QUERY         Query string to filter results
+  --max-partition-size-mb MAX_PARTITION_SIZE_MB
+                        Maximum in-memory size of partition dataframe in megabytes (default 1000). Note that the file size will be smaller due to compression
+  --debug               Enable debug logging
+  --quiet               Disable most logging (ignored if --debug specified)
+```
+
+# Examples
+
 This will read all records from the `my-data` index, in batches of 500, and write them to a parquet file named `my-data.parquet`:
 
     dump-es-parquet --es https://example.com:9200 my-data
