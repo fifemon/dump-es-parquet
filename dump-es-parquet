@@ -30,6 +30,7 @@ es2pl_type = {
     'keyword': pl.String,
     'boolean': pl.Boolean,
     'date': pl.Datetime,
+    'geo_point': pl.Struct({"lat": pl.Float64, "lon": pl.Float64}),
 }
 
 logger = logging.getLogger(__name__)
