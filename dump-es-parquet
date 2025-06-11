@@ -154,8 +154,13 @@ class Processor(object):
         mapping = self.es_client.indices.get_mapping(index=index)
         logger.debug(mapping)
         for idx,dts in mapping.items():
-            for dt,m in dts['mappings'].items():
-                return self.map_properties(m)
+            if 'properties' in dts['mappings']:
+                # no doc types (ES7+ & OS)
+                return self.map_properties(dts['mappings'])
+            else:
+                # only use the first doc type (multiple doc types were removed in ES5?)
+                for dt,m in dts['mappings'].items():
+                    return self.map_properties(m)
 
     def process_index(self,index):
         schema = self.index_schema(index)
