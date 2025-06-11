@@ -70,7 +70,7 @@ class Processor(object):
                 else:
                     r[prefix+field] = pl.Struct(self.map_properties(typ))
             else:
-                r[prefix+field] = es2pl_type.get(typ['type'],None)
+                r[prefix+field] = es2pl_type.get(typ['type'],pl.Object)
         return r
     
     def map_source(self, schema, src, prefix=''):
