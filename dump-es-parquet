@@ -94,8 +94,11 @@ class Processor(object):
             # (it's just the scalar type), while we'd have set the dataframe schema to a list in advance.
             # Taking the first value is an imperfect compromise.
             if type(v) is list:
-                self.log_warning(f'field {pk} is list - keeping first value')
-                v = v[0]
+                if len(v) > 0:
+                    self.log_warning(f'field {pk} is list - keeping first value')
+                    v = v[0]
+                else:
+                    continue
 
             if schema[pk] == pl.Struct:
                 if self.flatten:
