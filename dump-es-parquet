@@ -172,24 +172,30 @@ class Processor(object):
 
         partition = 0
         while True:
-            s = self.es_client.scroll(scroll_id=s['_scroll_id'],scroll="5m")
-            if len(s['hits']['hits']) == 0:
-                break
-            df2 = pl.DataFrame([self.map_source(schema, d['_source']) for d in s['hits']['hits']], schema=schema, orient='rows')
-            if df is None:
-                df = df2
-            else:
-                df = df.vstack(df2)
-            sent_hits += len(s['hits']['hits'])
-            logger.info('read %d/%d records'%(sent_hits,all_hits))
+            try:
+                s = self.es_client.scroll(scroll_id=s['_scroll_id'],scroll="5m")
+                if len(s['hits']['hits']) == 0:
+                    break
+                df2 = pl.DataFrame([self.map_source(schema, d['_source']) for d in s['hits']['hits']], schema=schema, orient='rows')
+                if df is None:
+                    df = df2
+                else:
+                    df = df.vstack(df2)
+                sent_hits += len(s['hits']['hits'])
+                logger.info('read %d/%d records'%(sent_hits,all_hits))
 
-            if df.estimated_size('mb') > 1000:
+                if df.estimated_size('mb') > 1000:
+                    fname = index+f'-{partition:04}.parquet'
+                    df.write_parquet(fname)
+                    logger.log(99,f'Partition size reached. {sent_hits}/{all_hits} records written to {fname}')
+                    partition += 1
+                    df = None
+                    sent_hits = 0
+            except KeyboardInterrupt:
                 fname = index+f'-{partition:04}.parquet'
                 df.write_parquet(fname)
-                logger.log(99,f'Partition size reached. {sent_hits}/{all_hits} records written to {fname}')
-                partition += 1
-                df = None
-                sent_hits = 0
+                logger.log(99,f'Keyboard interrupt. {sent_hits}/{all_hits} records written to {fname}')
+                break
 
         for msg,cnt in self.doc_warnings.items():
             logger.warning(f'{msg} [{cnt} documents]')
