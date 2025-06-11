@@ -71,6 +71,8 @@ class Processor(object):
                     r[prefix+field] = pl.Struct(self.map_properties(typ))
             else:
                 r[prefix+field] = es2pl_type.get(typ['type'],None)
+                if r[prefix+field] is None:
+                    logger.error(f'unhandled es mapping type {typ["type"]} for field {field}')
         return r
     
     def map_source(self, schema, src, prefix=''):
