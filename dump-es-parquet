@@ -195,9 +195,7 @@ class Processor(object):
                     df = None
                     sent_hits = 0
             except KeyboardInterrupt:
-                fname = index+f'-{partition:04}.parquet'
-                df.write_parquet(fname)
-                logger.log(99,f'Keyboard interrupt. {sent_hits}/{all_hits} records written to {fname}')
+                logger.log(99,f'Keyboard interrupt, breaking...')
                 break
 
         for msg,cnt in self.doc_warnings.items():
