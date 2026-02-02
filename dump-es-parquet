@@ -37,7 +37,7 @@ es2pl_type = {
 logger = logging.getLogger(__name__)
 
 class Processor(object):
-    def __init__(self, es, index, size=500, timeout=60, flatten=False, query=None, partition_size=1000, fields=None):
+    def __init__(self, es, index, size=500, timeout=60, flatten=False, query=None, partition_size=1000, fields=None, cert=None, key=None, verify_certs=True, capath=None):
         self.es = es
         self.index = index
         self.size = size
@@ -47,7 +47,18 @@ class Processor(object):
         self.partition_size = partition_size
         self.fields = fields
 
-        self.es_client = OpenSearch(self.es, timeout=timeout, 
+        if cert is not None:
+            self.es_client = OpenSearch(self.es,
+                                        timeout=timeout, 
+                                        connection_class = RequestsHttpConnection,
+                                        use_ssl = True,
+                                        client_cert = cert,
+                                        client_key = key,
+                                        verify_certs = verify_certs,
+                                        ca_certs = capath)
+        else:
+            self.es_client = OpenSearch(self.es,
+                                        timeout=timeout, 
                                         connection_class = RequestsHttpConnection)
 
         self.doc_warnings = defaultdict(lambda: 0)
@@ -227,6 +238,10 @@ if __name__=="__main__":
     parser = ArgumentParser(description='Dump documents to parquet files')
     parser.add_argument('index',help='source index pattern')
     parser.add_argument('--es',help='source cluster address',default="http://localhost:9200")
+    parser.add_argument('--cert',help='Client x509 certificate',default=None,type=str)
+    parser.add_argument('--key',help='Client x509 key',default=None,type=str)
+    parser.add_argument('--no-verify-certs',help='Do not verify x509 certificates',action='store_false')
+    parser.add_argument('--capath',help='Path to CA certificates',default=None,type=str)
     # we can just use the index name for each file
     #TODO: hive partitioning? https://duckdb.org/docs/data/partitioning/hive_partitioning
     #parser.add_argument('--filename',help='parquet file name',default="elastic.parquet")
@@ -253,5 +268,15 @@ if __name__=="__main__":
         logging.basicConfig(level=logging.INFO, format=logfmt)
     logging.addLevelName(99,'UBER')
 
-    processor = Processor(args.es, args.index, args.size, args.timeout, args.flatten, args.query, args.max_partition_size_mb, args.fields)
+    processor = Processor(args.es, args.index, 
+            size=args.size, 
+            timeout=args.timeout, 
+            flatten=args.flatten, 
+            query=args.query, 
+            partition_size=args.max_partition_size_mb, 
+            fields=args.fields, 
+            cert=args.cert, 
+            key=args.key, 
+            verify_certs=args.no_verify_certs, 
+            capath=args.capath)
     processor.process()
