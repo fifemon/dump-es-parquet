@@ -8,11 +8,11 @@ filelock==3.16.1
 idna==3.10
 opensearch-py==2.8.0
 platformdirs==4.3.6
-polars==1.21.0
+polars==1.36.1
 pycparser==2.22
 PySocks==1.7.1
 python-dateutil==2.9.0.post0
-requests==2.32.3
+requests==2.32.5
 six==1.17.0
 urllib3==1.26.20
 virtualenv==20.29.1
