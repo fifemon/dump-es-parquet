@@ -251,9 +251,9 @@ class Processor(object):
                     if self.output == 'parquet':
                         df.write_parquet(fname)
                     elif self.output == 'ndjson':
-                        df.write_ndjson(fname, compression=self.compression)
+                        df.write_ndjson(fname)
                     elif self.output == 'csv':
-                        df.write_csv(fname, compression=self.compression)
+                        df.write_csv(fname)
                     logger.log(99,f'Partition size reached. {sent_hits}/{all_hits} records written to {fname}')
                     partition += 1
                     df = None
@@ -273,9 +273,9 @@ class Processor(object):
             if self.output == 'parquet':
                 df.write_parquet(fname)
             elif self.output == 'ndjson':
-                df.write_ndjson(fname, compression=self.compression)
+                df.write_ndjson(fname)
             elif self.output == 'csv':
-                df.write_csv(fname, compression=self.compression)
+                df.write_csv(fname)
         elif self.output == 'stdout':
             fname = 'stdout'
         elif self.output == 'jsonl':
@@ -298,8 +298,8 @@ Behavior varies with output format:
     parquet: builds a polars dataframe in-memory, accumulating records until the dataframe reaches the 
              specified max partition size, at which point it is written to a parquet file with the index name
              and partition number, which is omitted if the entire results fit into a single parition.
-    ndjson:  same as parquet, but written to newline-delimited json files instead, with optional compression.
-    csv:     same as parquet, but written to csv files instead, with optional compression.
+    ndjson:  same as parquet, but written to newline-delimited json files instead.
+    csv:     same as parquet, but written to csv files instead.
     stdout:  outputs raw records in JSON format to stdout. Does not attempt to build a dataframe, 
              so will work even if the source data has problematic/inconsistent types.
     jsonl:   same as stdout, but outputs records to files, one per request batch.''',
@@ -318,7 +318,6 @@ Behavior varies with output format:
     parser.add_argument('--timeout',help='Elasticsearch read timeout in seconds (default 60)',default=60,type=int)
 
     parser.add_argument('--output',help='output format',choices=['parquet','ndjson','csv','jsonl','stdout'],default='parquet',type=str)
-    parser.add_argument('--compression',help='output file compression',choices=['uncompressed','gzip','zstd'],default='uncompressed',type=str)
 
 
     parser.add_argument('--flatten',help='Flatten nested data into top level, otherwise use structs',action='store_true')
@@ -344,7 +343,6 @@ Behavior varies with output format:
 
     processor = Processor(args.es, args.index, 
             output=args.output,
-            compression=args.compression,
             size=args.size, 
             sort=args.sort,
             timeout=args.timeout, 
