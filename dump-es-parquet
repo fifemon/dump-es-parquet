@@ -3,12 +3,13 @@
 Write parquet files from elasticsearch indices, using polars.
 """
 
-from argparse import ArgumentParser
+from argparse import ArgumentParser, RawDescriptionHelpFormatter
 import logging
 import requests
 import traceback
 import re
 import json
+import sys
 from datetime import datetime
 from collections import defaultdict
 
@@ -37,9 +38,13 @@ es2pl_type = {
 logger = logging.getLogger(__name__)
 
 class Processor(object):
-    def __init__(self, es, index, size=500, timeout=60, flatten=False, query=None, partition_size=1000, fields=None, cert=None, key=None, verify_certs=True, capath=None):
+    def __init__(self, es, index, output='parquet', compression='uncompressed', sort='@timestamp:asc', size=500, timeout=60, flatten=False, query=None, partition_size=1000, fields=None, cert=None, key=None, verify_certs=True, capath=None):
         self.es = es
         self.index = index
+        self.output = output
+        self.build_df = self.output in ['parquet', 'ndjson', 'csv']
+        self.compression = compression
+        self.sort = sort
         self.size = size
         self.timeout = timeout
         self.flatten = flatten
@@ -172,42 +177,83 @@ class Processor(object):
                 # only use the first doc type (multiple doc types were removed in ES5?)
                 for dt,m in dts['mappings'].items():
                     return self.map_properties(m)
+            return self.map_properties(dts['mappings'])
+
+    def __output_ext(self):
+        ext = self.output
+        if self.compression == 'gzip':
+            ext += '.gz'
+        elif self.compression == 'zstd':
+            ext += '.zstd'
+        return ext
 
     def process_index(self,index):
-        schema = self.index_schema(index)
-        logger.debug(schema)
+        if self.build_df:
+            schema = self.index_schema(index)
+            logger.debug(schema)
         s = self.es_client.search(index=index,
                                   q=self.query,
                                   _source=self.fields if self.fields else True,
                                   scroll="5m",
-                                  size=self.size)
+                                  size=self.size,
+                                  sort=self.sort)
         all_hits = s['hits']['total']
+        if type(all_hits) is dict:
+            all_hits = all_hits['value']
         if all_hits == 0:
             logger.error('No records found')
             return
 
         logger.log(99,'Processing %d records'%all_hits)
-        df = pl.DataFrame([self.map_source(schema, d['_source']) for d in s['hits']['hits']], schema=schema, orient='rows')
+        partition = 0
+        if self.build_df:
+            df = pl.DataFrame([self.map_source(schema, d['_source']) for d in s['hits']['hits']], schema=schema, orient='rows')
+        elif self.output=='jsonl':
+            if all_hits == len(s['hits']['hits']):
+                fname = index+'.jsonl'
+            else:
+                fname = index+f'-{partition:04}.jsonl'
+            with open(fname,'w') as f:
+                for d in s['hits']['hits']:
+                    json.dump(d['_source'], f)
+        elif self.output=='stdout':
+            for d in s['hits']['hits']:
+                json.dump(d['_source'], sys.stdout)
+            
         sent_hits = len(s['hits']['hits'])
         logger.info('read %d/%d records'%(sent_hits,all_hits))
 
-        partition = 0
         while True:
             try:
                 s = self.es_client.scroll(scroll_id=s['_scroll_id'],scroll="5m")
                 if len(s['hits']['hits']) == 0:
                     break
-                df2 = pl.DataFrame([self.map_source(schema, d['_source']) for d in s['hits']['hits']], schema=schema, orient='rows')
-                if df is None:
-                    df = df2
-                else:
-                    df = df.vstack(df2)
+                if self.build_df:
+                    df2 = pl.DataFrame([self.map_source(schema, d['_source']) for d in s['hits']['hits']], schema=schema, orient='rows')
+                    if df is None:
+                        df = df2
+                    else:
+                        df = df.vstack(df2)
+                elif self.output=='jsonl':
+                    partition += 1
+                    fname = index+f'-{partition:04}.jsonl'
+                    with open(fname,'w') as f:
+                        for d in s['hits']['hits']:
+                            json.dump(d['_source'], f)
+                elif self.output=='stdout':
+                    for d in s['hits']['hits']:
+                        json.dump(d['_source'], sys.stdout)
                 sent_hits += len(s['hits']['hits'])
                 logger.info('read %d/%d records'%(sent_hits,all_hits))
 
-                if df.estimated_size('mb') > 1000:
-                    fname = index+f'-{partition:04}.parquet'
-                    df.write_parquet(fname)
+                if self.build_df and df.estimated_size('mb') > 1000:
+                    fname = f'{index}-{partition:04}.{self.__output_ext()}'
+                    if self.output == 'parquet':
+                        df.write_parquet(fname)
+                    elif self.output == 'ndjson':
+                        df.write_ndjson(fname, compression=self.compression)
+                    elif self.output == 'csv':
+                        df.write_csv(fname, compression=self.compression)
                     logger.log(99,f'Partition size reached. {sent_hits}/{all_hits} records written to {fname}')
                     partition += 1
                     df = None
@@ -219,11 +265,21 @@ class Processor(object):
         for msg,cnt in self.doc_warnings.items():
             logger.warning(f'{msg} [{cnt} documents]')
 
-        if partition == 0:
-            fname = index+'.parquet'
-        else:
-            fname = index+f'-{partition:04}.parquet'
-        df.write_parquet(fname)
+        if self.build_df:
+            if partition == 0:
+                fname = f'{index}.{self.__output_ext()}'
+            else:
+                fname = f'{index}-{partition:04}.{self.__output_ext()}'
+            if self.output == 'parquet':
+                df.write_parquet(fname)
+            elif self.output == 'ndjson':
+                df.write_ndjson(fname, compression=self.compression)
+            elif self.output == 'csv':
+                df.write_csv(fname, compression=self.compression)
+        elif self.output == 'stdout':
+            fname = 'stdout'
+        elif self.output == 'jsonl':
+            fname = f'{index}*.jsonl'
         logger.log(99,f'Processing complete. {sent_hits}/{all_hits} records written to {fname}.')
 
     def get_indices(self, index_pattern):
@@ -235,7 +291,19 @@ class Processor(object):
 
 
 if __name__=="__main__":
-    parser = ArgumentParser(description='Dump documents to parquet files')
+    parser = ArgumentParser(description='''Dump documents from Elasticsearch or OpenSearch to stdout or files.
+
+Behavior varies with output format:
+
+    parquet: builds a polars dataframe in-memory, accumulating records until the dataframe reaches the 
+             specified max partition size, at which point it is written to a parquet file with the index name
+             and partition number, which is omitted if the entire results fit into a single parition.
+    ndjson:  same as parquet, but written to newline-delimited json files instead, with optional compression.
+    csv:     same as parquet, but written to csv files instead, with optional compression.
+    stdout:  outputs raw records in JSON format to stdout. Does not attempt to build a dataframe, 
+             so will work even if the source data has problematic/inconsistent types.
+    jsonl:   same as stdout, but outputs records to files, one per request batch.''',
+            formatter_class=RawDescriptionHelpFormatter)
     parser.add_argument('index',help='source index pattern')
     parser.add_argument('--es',help='source cluster address',default="http://localhost:9200")
     parser.add_argument('--cert',help='Client x509 certificate',default=None,type=str)
@@ -246,7 +314,13 @@ if __name__=="__main__":
     #TODO: hive partitioning? https://duckdb.org/docs/data/partitioning/hive_partitioning
     #parser.add_argument('--filename',help='parquet file name',default="elastic.parquet")
     parser.add_argument('--size',help='Record batch size (default 500)',default=500,type=int)
+    parser.add_argument('--sort',help='Comma-separated list of field:direction pairs',default='@timestamp:asc',type=str)
     parser.add_argument('--timeout',help='Elasticsearch read timeout in seconds (default 60)',default=60,type=int)
+
+    parser.add_argument('--output',help='output format',choices=['parquet','ndjson','csv','jsonl','stdout'],default='parquet',type=str)
+    parser.add_argument('--compression',help='output file compression',choices=['uncompressed','gzip','zstd'],default='uncompressed',type=str)
+
+
     parser.add_argument('--flatten',help='Flatten nested data into top level, otherwise use structs',action='store_true')
     parser.add_argument('--query',help='Query string to filter results',default=None,type=str)
     parser.add_argument('--fields',help='Comma-separated list of fields to include in the output. Wildcards are supported. '
@@ -269,7 +343,10 @@ if __name__=="__main__":
     logging.addLevelName(99,'UBER')
 
     processor = Processor(args.es, args.index, 
+            output=args.output,
+            compression=args.compression,
             size=args.size, 
+            sort=args.sort,
             timeout=args.timeout, 
             flatten=args.flatten, 
             query=args.query, 
