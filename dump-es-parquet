@@ -33,6 +33,7 @@ es2pl_type = {
     'date': pl.Datetime,
     'geo_point': pl.Struct({"lat": pl.Float64, "lon": pl.Float64}),
     'ip': pl.String,
+    'object': pl.String
 }
 
 logger = logging.getLogger(__name__)
