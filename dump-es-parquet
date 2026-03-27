@@ -41,7 +41,7 @@ es2pl_type = {
 logger = logging.getLogger(__name__)
 
 class Processor(object):
-    def __init__(self, es, index, output='parquet', compression='uncompressed', sort='@timestamp:asc', size=500, timeout=60, flatten=False, query=None, partition=True, partition_size=1000, fields=None, cert=None, key=None, verify_certs=True, capath=None):
+    def __init__(self, es, index, output='parquet', compression='uncompressed', sort='@timestamp:asc', size=500, timeout=60, flatten=False, query=None, partition=True, partition_rows=100000, partition_size=1000, fields=None, cert=None, key=None, verify_certs=True, capath=None):
         self.es = es
         self.index = index
         self.output = output
@@ -53,6 +53,7 @@ class Processor(object):
         self.flatten = flatten
         self.query = query
         self.partition = partition
+        self.partition_rows = partition_rows
         self.partition_size = partition_size
         self.fields = fields
 
@@ -226,14 +227,18 @@ class Processor(object):
                 json.dump(d['_source'], sys.stdout)
                 sys.stdout.write('\n')
 
-        sent_hits = len(s['hits']['hits'])
-        logger.info('read %d/%d records'%(sent_hits,all_hits))
+        read_hits = len(s['hits']['hits'])
+        part_rows = read_hits
+        logger.info('read %d/%d records'%(read_hits,all_hits))
 
         while True:
             try:
                 s = self.es_client.scroll(scroll_id=s['_scroll_id'],scroll="5m")
-                if len(s['hits']['hits']) == 0:
+                hits = len(s['hits']['hits'])
+                if hits == 0:
                     break
+                read_hits += hits
+                logger.info('read %d/%d records'%(read_hits,all_hits))
                 if self.build_df:
                     df2 = pl.DataFrame([self.map_source(schema, d['_source']) for d in s['hits']['hits']], schema=schema, orient='rows')
                     if df is None:
@@ -242,13 +247,10 @@ class Processor(object):
                         df = df.vstack(df2)
                 elif self.output=='jsonl':
                     if self.partition:
-                        partition += 1
                         fname = index+f'-{partition:04}.jsonl'
-                        mode = 'w'
                     else:
                         fname = index+'.jsonl'
-                        mode = 'a'
-                    with open(fname,mode) as f:
+                    with open(fname,'a') as f:
                         for d in s['hits']['hits']:
                             json.dump(d['_source'], f)
                             f.write('\n')
@@ -256,21 +258,25 @@ class Processor(object):
                     for d in s['hits']['hits']:
                         json.dump(d['_source'], sys.stdout)
                         sys.stdout.write('\n')
-                sent_hits += len(s['hits']['hits'])
-                logger.info('read %d/%d records'%(sent_hits,all_hits))
+                part_rows += hits
 
-                if self.build_df and self.partition and df.estimated_size('mb') > self.partition_size:
-                    fname = f'{index}-{partition:04}.{self.__output_ext()}'
-                    if self.output == 'parquet':
-                        df.write_parquet(fname)
-                    elif self.output == 'ndjson':
-                        df.write_ndjson(fname)
-                    elif self.output == 'csv':
-                        df.write_csv(fname)
-                    logger.log(99,f'Partition size reached. {sent_hits}/{all_hits} records written to {fname}')
-                    partition += 1
-                    df = None
-                    sent_hits = 0
+                if self.partition:
+                    if self.build_df and (df.estimated_size('mb') > self.partition_size or part_rows > self.partition_rows):
+                        fname = f'{index}-{partition:04}.{self.__output_ext()}'
+                        if self.output == 'parquet':
+                            df.write_parquet(fname)
+                        elif self.output == 'ndjson':
+                            df.write_ndjson(fname)
+                        elif self.output == 'csv':
+                            df.write_csv(fname)
+                        logger.log(99,f'Partition size reached. {part_rows}/{all_hits} records written to {fname}')
+                        partition += 1
+                        df = None
+                        part_rows = 0
+                    elif self.output == 'jsonl' and part_rows >= self.partition_rows:
+                        logger.log(99,f'Partition size reached. {part_rows}/{all_hits} records written to {index}-{partition:04}.jsonl')
+                        partition += 1
+                        part_rows = 0
             except TransportError as e:
                 logger.warning(str(e))
                 time.sleep(10)
@@ -297,7 +303,7 @@ class Processor(object):
             fname = 'stdout'
         elif self.output == 'jsonl':
             fname = f'{index}*.jsonl'
-        logger.log(99,f'Processing complete. {sent_hits}/{all_hits} records written to {fname}.')
+        logger.log(99,f'Processing complete. {part_rows}/{all_hits} records written to {fname}.')
 
     def get_indices(self, index_pattern):
         idxs = self.es_client.indices.get_settings(index=index_pattern)
@@ -314,12 +320,12 @@ Behavior varies with output format:
 
     parquet: builds a polars dataframe in-memory, accumulating records until the dataframe reaches the 
              specified max partition size, at which point it is written to a parquet file with the index name
-             and partition number, which is omitted if the entire results fit into a single parition.
+             and partition number, which is omitted if the entire results fit into a single partition.
     ndjson:  same as parquet, but written to newline-delimited json files instead.
     csv:     same as parquet, but written to csv files instead.
     stdout:  outputs raw records in JSON format to stdout. Does not attempt to build a dataframe, 
              so will work even if the source data has problematic/inconsistent types.
-    jsonl:   same as stdout, but outputs records to files, one per request batch.''',
+    jsonl:   same as stdout, but outputs records to files with up to --max-partition-rows records per file.''',
             formatter_class=RawDescriptionHelpFormatter)
     parser.add_argument('index',help='source index pattern')
     parser.add_argument('--es',help='source cluster address',default="http://localhost:9200")
@@ -341,7 +347,9 @@ Behavior varies with output format:
     parser.add_argument('--query',help='Query string to filter results',default=None,type=str)
     parser.add_argument('--fields',help='Comma-separated list of fields to include in the output. Wildcards are supported. '
                         'Defaults to all fields.',default=None,type=str)
-    parser.add_argument('--max-partition-size-mb',help='Maximum in-memory size of partition dataframe in megabytes (default 1000). '
+    parser.add_argument('--max-partition-rows',help='Maximum rows in partition',
+                        default=1000000,type=int)
+    parser.add_argument('--max-partition-mb',help='Maximum in-memory size of partition dataframe in megabytes (default 1000). '
                         'Note that the file size will be smaller due to compression',
                         default=1000,type=int)
     parser.add_argument('--no-partition',help='Do not partition into files no matter how big the dataset is',action='store_true')
@@ -367,7 +375,8 @@ Behavior varies with output format:
             flatten=args.flatten, 
             query=args.query,
             partition=not args.no_partition,
-            partition_size=args.max_partition_size_mb,
+            partition_rows=args.max_partition_rows,
+            partition_size=args.max_partition_mb,
             fields=args.fields, 
             cert=args.cert, 
             key=args.key, 
