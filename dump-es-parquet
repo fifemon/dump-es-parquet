@@ -51,7 +51,7 @@ es2pl_type = {
 logger = logging.getLogger(__name__)
 
 class Processor(object):
-    def __init__(self, es, index, output='parquet', compression='uncompressed', sort='@timestamp:asc', size=500, timeout=60, flatten=False, query=None, partition=True, partition_rows=100000, partition_size=1000, fields=None, cert=None, key=None, verify_certs=True, capath=None):
+    def __init__(self, es, index, output='parquet', compression='uncompressed', sort='@timestamp:asc', size=500, scroll='1h', timeout=60, flatten=False, query=None, partition=True, partition_rows=100000, partition_size=1000, fields=None, cert=None, key=None, verify_certs=True, capath=None):
         self.es = es
         self.index = index
         self.output = output
@@ -59,6 +59,7 @@ class Processor(object):
         self.compression = compression
         self.sort = sort
         self.size = size
+        self.scroll = scroll
         self.timeout = timeout
         self.flatten = flatten
         self.query = query
@@ -209,7 +210,7 @@ class Processor(object):
         s = self.es_client.search(index=index,
                                   q=self.query,
                                   _source=self.fields if self.fields else True,
-                                  scroll="5m",
+                                  scroll=self.scroll,
                                   size=self.size,
                                   sort=self.sort)
         all_hits = s['hits']['total']
@@ -240,7 +241,7 @@ class Processor(object):
 
         while True:
             try:
-                s = self.es_client.scroll(scroll_id=s['_scroll_id'],scroll="5m")
+                s = self.es_client.scroll(scroll_id=s['_scroll_id'],scroll=self.scroll)
                 hits = len(s['hits']['hits'])
                 if hits == 0:
                     break
@@ -353,6 +354,7 @@ Behavior varies with output format:
     parser.add_argument('--size',help='Record batch size (default 500)',default=500,type=int)
     parser.add_argument('--sort',help='Comma-separated list of field:direction pairs',default='@timestamp:asc',type=str)
     parser.add_argument('--timeout',help='Elasticsearch read timeout in seconds (default 60)',default=60,type=int)
+    parser.add_argument('--scroll',help='Elasticsearch scroll lifetime (default 1h)',default='1h',type=str)
 
     parser.add_argument('--flatten',help='Flatten nested data into top level, otherwise use structs',action='store_true')
     parser.add_argument('--query',help='Query string to filter results',default=None,type=str)
@@ -391,7 +393,8 @@ Behavior varies with output format:
             compression=args.compression,
             size=args.size, 
             sort=args.sort,
-            timeout=args.timeout, 
+            scroll=args.scroll,
+            timeout=args.timeout,
             flatten=args.flatten, 
             query=args.query,
             partition=not args.no_partition,
