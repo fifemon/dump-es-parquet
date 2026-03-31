@@ -273,7 +273,8 @@ class Processor(object):
                     elif self.output == 'jsonl' and part_rows >= self.partition_rows:
                         self.__write_partition(df, index, partition, part_rows, all_hits)
                         partition += 1
-                        df.truncate(0)
+                        df.close()
+                        df = SpooledTemporaryFile(mode='wb')
                         part_rows = 0
             except TransportError as e:
                 logger.warning(str(e))
