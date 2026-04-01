@@ -183,7 +183,15 @@ class Processor(object):
         return dest
 
     def index_schema(self,index):
-        mapping = self.es_client.indices.get_mapping(index=index)
+        while True:
+            try:
+                mapping = self.es_client.indices.get_mapping(index=index)
+            except TransportError as e:
+                logger.warning(str(e))
+                time.sleep(10)
+                continue
+            else:
+                break
         logger.debug(mapping)
         for idx,dts in mapping.items():
             if 'properties' in dts['mappings']:
@@ -207,12 +215,21 @@ class Processor(object):
         if self.build_df:
             schema = self.index_schema(index)
             logger.debug(schema)
-        s = self.es_client.search(index=index,
-                                  q=self.query,
-                                  _source=self.fields if self.fields else True,
-                                  scroll=self.scroll,
-                                  size=self.size,
-                                  sort=self.sort)
+
+        while True:
+            try:
+                s = self.es_client.search(index=index,
+                                        q=self.query,
+                                        _source=self.fields if self.fields else True,
+                                        scroll=self.scroll,
+                                        size=self.size,
+                                        sort=self.sort)
+            except TransportError as e:
+                logger.warning(str(e))
+                time.sleep(10)
+                continue
+            else:
+                break
         all_hits = s['hits']['total']
         if type(all_hits) is dict:
             all_hits = all_hits['value']
@@ -322,8 +339,15 @@ class Processor(object):
         logger.log(99,f'{rows}/{total_rows} records written to {fname}.')
 
     def get_indices(self, index_pattern):
-        idxs = self.es_client.indices.get_settings(index=index_pattern)
-        return idxs.keys()
+        while True:
+            try:
+                idxs = self.es_client.indices.get_settings(index=index_pattern)
+            except TransportError as e:
+                logger.warning(str(e))
+                time.sleep(10)
+                continue
+            else:
+                return idxs.keys()
 
     def log_warning(self, msg):
         self.doc_warnings[msg] += 1
